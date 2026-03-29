@@ -210,6 +210,5 @@ __marimo__/
 .track_cache.json
 .spotify_token_cache
 
-# Trained model weights and dataset
-EEGClassifier/models/
+# Dataset (large CSV files)
 data/
