@@ -209,3 +209,7 @@ __marimo__/
 # Runtime data
 .track_cache.json
 .spotify_token_cache
+
+# Trained model weights and dataset
+EEGClassifier/models/
+data/

@@ -77,7 +77,15 @@ class EEGClassifier:
         self.fs = fs
         self.device = torch.device("cpu")   # always CPU for inference
 
-        self.model = EmotionMLP(input_dim=N_FEATURES)
+        # Load feature metadata if available (written by train_csv.py)
+        meta_path = model_path.parent / "feature_meta.pkl"
+        input_dim = N_FEATURES
+        if meta_path.exists():
+            with open(meta_path, "rb") as f:
+                meta = pickle.load(f)
+            input_dim = meta.get("n_features", N_FEATURES)
+
+        self.model = EmotionMLP(input_dim=input_dim)
         self.model.load_state_dict(torch.load(model_path, map_location=self.device))
         self.model.eval()
 

@@ -5,15 +5,40 @@ Brainwave-controlled music system. Monitors EEG brain state in real time and aut
 ## Architecture
 
 ```
-eeg_detection/          → detects current brain state (calm / focused / stressed)
-song_emotion_profiling/ → profiles your Spotify library by emotional state  ← THIS MODULE
-baseline_matching/      → picks a track to steer you back toward baseline
+EEGClassifier/          → detects current brain state (calm / focused / stressed)  ✅
+song_emotion_profiling/ → profiles your Spotify library by emotional state          ✅
+baseline_matching/      → picks a track to steer you back toward baseline           ✅
 ```
 
 Data flows in one direction:
 
 ```
-EEG headset → eeg_detection → baseline_matching → song_emotion_profiling → Spotify playback
+Muse headset → EEGClassifier → BaselineSession → TrackLibrary → SpotifyPlayer
+```
+
+---
+
+## EEG Classifier
+
+Detects the user's current emotional state (calm / focused / stressed) from a 4-channel Muse EEG headband in real time.
+
+### Training
+
+Download the [Kaggle EEG Brainwave Dataset](https://www.kaggle.com/datasets/birdy654/eeg-brainwave-dataset-feeling-emotions) and place `emotions.csv` in the `data/` folder, then train:
+
+```bash
+python -m EEGClassifier.train_csv --data data --out EEGClassifier/models --de-compatible
+```
+
+The `--de-compatible` flag extracts 16 features (differential entropy per band per channel) that match the live Muse inference pipeline.
+
+### Live Inference
+
+```python
+from EEGClassifier import EEGClassifier
+
+clf = EEGClassifier()
+state = clf.detect_emotional_state(eeg_windows)  # returns EmotionalState
 ```
 
 ---
@@ -149,6 +174,84 @@ print(library.summary())
 
 # Look up a specific track
 profile = library.get_profile(track_id="5xAVweJkMzCTib1YRDuZJi")
+```
+
+---
+
+## Baseline Matching
+
+Listens to the live EEG stream, detects when the user drifts from their baseline state, and automatically plays the best steering track from their library.
+
+### How It Works
+
+1. **Baseline** — user sets a target state at session start (calm / focused / stressed)
+2. **Listen** — `MuseStream` feeds EEG windows into `EEGClassifier` every 5 windows
+3. **Detect drift** — if the classified state differs from baseline for 3 consecutive readings, drift is confirmed
+4. **Select track** — `TrackLibrary.get_steering_candidates(from_state, to_state)` ranks songs by their steering score for that exact transition
+5. **Play** — `SpotifyPlayer` plays the top candidate on the user's active Spotify device
+6. **Cooldown** — waits 30 seconds before switching again to avoid rapid cycling
+
+### Spotify Setup
+
+The baseline matching module needs extra Spotify scopes for playback control. In your Spotify developer dashboard, make sure your app has these scopes enabled (they're requested automatically when you first run):
+
+- `user-modify-playback-state`
+- `user-read-playback-state`
+
+Spotify must be **open and playing on a device** before running — the API can't start playback from cold.
+
+### CLI Usage
+
+```bash
+# Live session with Muse headband (requires muse-lsl running)
+muse-lsl stream &
+python -m baseline_matching.main --baseline calm
+
+# Simulated session — no hardware needed, great for testing
+python -m baseline_matching.main --baseline calm --simulate
+
+# Simulate a specific drift sequence
+python -m baseline_matching.main --baseline focused --simulate \
+  --sim-states calm stressed stressed stressed calm
+```
+
+**Example output:**
+```
+Loaded 51 tracks  (calm: 14 | focused: 10 | stressed: 27)
+Baseline set to: CALM
+
+  State: CALM
+  State: CALM
+  State: STRESSED  ⚠ drift from calm
+  State: STRESSED  ⚠ drift from calm
+  State: STRESSED  ⚠ drift from calm
+[NeuroTune] Drift detected: stressed → switching to steer toward calm
+            Playing: "Falling for a Friend" — grentperez  (steering score: 0.89)
+  State: CALM
+```
+
+### Programmatic Usage
+
+```python
+from song_emotion_profiling import TrackLibrary
+from song_emotion_profiling.models import EmotionalState
+from EEGClassifier import EEGClassifier
+from baseline_matching import BaselineSession, SpotifyPlayer
+
+library    = TrackLibrary()
+player     = SpotifyPlayer()
+classifier = EEGClassifier()
+
+session = BaselineSession(
+    baseline=EmotionalState.CALM,
+    library=library,
+    player=player,
+    classifier=classifier,
+    on_state_change=lambda current, baseline: print(f"{current.value}"),
+)
+
+# Feed windows manually (e.g. from MuseStream)
+stream.on_window = session.on_window
 ```
 
 ---
